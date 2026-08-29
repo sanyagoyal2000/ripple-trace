@@ -55,6 +55,7 @@ export default function ClauseFlowWorkspace() {
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [activity, setActivity] = useState<string[]>(['AC-2 impact review opened by Dana Lindqvist.','Vanta monitor identity-mfa-04 reported four resources requiring attention.','Azure Pipeline drift-check #913 completed successfully.']);
   const [toast, setToast] = useState('');
+  const [webmcpDemo, setWebmcpDemo] = useState(false);
 
   const decided = Object.values(decisions).filter((x) => x !== 'pending').length;
   const approved = Object.values(decisions).filter((x) => x === 'approved').length;
@@ -76,6 +77,8 @@ export default function ClauseFlowWorkspace() {
     });
   }, [analysis, analyzed, proposals]);
 
+  useEffect(() => { setWebmcpDemo(new URLSearchParams(window.location.search).has('mcp')); }, []);
+
   return <main className="rt-app">
     <header className="rt-topbar"><div className="rt-brand"><div className="rt-mark">R</div><div><strong>RippleTrace</strong><span>Policy-to-execution intelligence</span></div></div><div className="rt-company"><span className="environment">Assurance workspace</span><div><strong>Wexler Systems</strong><span>Security Assurance</span></div><div className="rt-avatar">DL</div></div></header>
     <div className="rt-layout">
@@ -88,7 +91,7 @@ export default function ClauseFlowWorkspace() {
         {view==='evidence'&&<EvidenceView entities={analysis.snapshot.entities} findings={analysis.impact.findings} analyzed={analyzed} />}
       </section>
       <aside className="rt-rail"><Readiness score={readiness} baseline={analysis.baseline.score} after={analysis.revised.score} analyzed={analyzed} components={(analyzed?analysis.revised:analysis.baseline).components}/><ReviewQueue decided={decided} total={proposals.length}/><div className="activity"><div className="section-label">Recent activity</div>{activity.slice(0,4).map((a,i)=><p key={`${a}-${i}`}><i />{a}</p>)}</div></aside>
-    </div>{toast&&<div className="rt-toast" role="status">{toast}</div>}
+    </div>{webmcpDemo&&<WebMCPDemo onInspect={()=>setView('change')} onAnalyze={runAnalysis} onExplain={()=>setView('impact')} onApprove={()=>decide('PROP-008','approved')}/>} {toast&&<div className="rt-toast" role="status">{toast}</div>}
   </main>;
 }
 
@@ -123,3 +126,5 @@ function EvidenceView({entities,findings,analyzed}:{entities:Entity[];findings:F
 
 function Readiness({score,baseline,after,analyzed,components}:{score:number;baseline:number;after:number;analyzed:boolean;components:{label:string;score:number;weight:number}[]}){return <div className="readiness-panel"><div className="section-label">Assurance readiness</div><div className="score"><strong>{score}</strong><span>/100</span></div><div className="score-bar"><i style={{width:`${score}%`}}/></div>{analyzed&&<div className="score-delta"><span>Before {baseline}</span><b>→</b><span>After {after}</span></div>}<div className="component-list">{components.map((c)=><div key={c.label}><span>{c.label}<small>{Math.round(c.weight*100)}%</small></span><strong>{Math.round(c.score*100)}%</strong></div>)}</div></div>}
 function ReviewQueue({decided,total}:{decided:number;total:number}){return <div className="journey"><div className="section-label">Review queue</div><button><i>{total-decided}</i><span>Pending decisions<small>AC-2 policy change</small></span></button><button><i>2</i><span>Owner responses due<small>Platform Identity · Cloud SRE</small></span></button><button><i>1</i><span>Exception expiring<small>ServiceNow · Oct 10</small></span></button></div>}
+
+function WebMCPDemo({onInspect,onAnalyze,onExplain,onApprove}:{onInspect:()=>void;onAnalyze:()=>void;onExplain:()=>void;onApprove:()=>void}){const [stage,setStage]=useState(0);const steps=[{tool:'get_traceability_graph',result:'46 entities · 71 verified relationships',action:onInspect},{tool:'analyze_change_impact',result:'13 findings · no source records changed',action:onAnalyze},{tool:'create_impact_review',result:'13 draft proposals created for human review',action:onExplain},{tool:'explain_finding · F-008',result:'Expected: phishing-resistant only · Observed: MFA with SMS/TOTP fallback',action:onExplain}];const advance=()=>{if(stage<steps.length){steps[stage].action();setStage(stage+1)}};const approve=()=>{onApprove();setStage(5)};return <aside className="mcp-demo-panel"><header><div><span>WebMCP agent session</span><strong>Policy impact assistant</strong></div><b>LOCAL TEST</b></header><div className="mcp-prompt"><span>Human request</span><p>Review proposed AC-2 v3, identify affected delivery and evidence records, and prepare actions. Do not change approved records.</p></div><div className="mcp-log">{steps.slice(0,stage).map((s,i)=><div className="mcp-call" key={s.tool}><i>{i+1}</i><section><span>Tool call</span><code>{s.tool}</code><p>✓ {s.result}</p></section></div>)}{stage===4&&<div className="mcp-handoff"><span>Human decision required</span><strong>PROP-008 · Update authentication verification</strong><p>The agent has stopped. Dana must approve or reject this proposed action.</p><div><button onClick={()=>setStage(5)}>Reject</button><button onClick={approve}>Approve as Dana</button></div></div>}{stage===5&&<div className="mcp-complete"><b>✓ Approved by Dana Lindqvist</b><p>Decision recorded in RippleTrace. Source-system write-back remains governed by its owner workflow.</p></div>}</div>{stage<4&&<button className="mcp-next" onClick={advance}>{stage===0?'Run agent task':`Continue · ${steps[stage].tool}`}</button>}<footer><i/> document.modelContext · 7 tools registered</footer></aside>}
