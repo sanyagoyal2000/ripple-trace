@@ -1,35 +1,13 @@
-export type ClauseFlowActions = {
-  getRequirement: (id: string) => unknown;
-  getTraceabilityGraph: () => unknown;
-  analyzeChangeImpact: (id: string) => unknown;
-  createImpactReview: () => unknown;
-  approveProposal: (id: string) => unknown;
-  rejectProposal: (id: string) => unknown;
-  generateTraceabilityReport: () => unknown;
-};
-
-declare global {
-  interface Window { __clauseflowActions?: ClauseFlowActions; __clauseflowRegistered?: boolean }
-  interface Document { modelContext?: { registerTool: (tool: { name: string; description: string; inputSchema: object; execute: (input: Record<string, string>) => unknown }) => void } }
-}
-
-const schemas = {
-  id: { type: 'object', properties: { id: { type: 'string', description: 'Stable ClauseFlow record identifier' } }, required: ['id'] },
-  none: { type: 'object', properties: {} },
-};
-
-export function registerClauseFlowTools(actions: ClauseFlowActions) {
-  window.__clauseflowActions = actions;
-  if (!document.modelContext || window.__clauseflowRegistered) return false;
-  const register = (name: string, description: string, inputSchema: object, execute: (input: Record<string, string>) => unknown) => document.modelContext?.registerTool({ name, description, inputSchema, execute });
-
-  register('get_requirement', 'Read an approved policy requirement and its current execution status. This tool does not modify records.', schemas.id, ({ id }) => window.__clauseflowActions?.getRequirement(id));
-  register('get_traceability_graph', 'Read the current requirement-to-control-to-work traceability graph, including gaps and provenance.', schemas.none, () => window.__clauseflowActions?.getTraceabilityGraph());
-  register('analyze_change_impact', 'Analyze how a revised requirement affects controls, work, tests, evidence, and exceptions. Analysis never modifies approved records.', schemas.id, ({ id }) => window.__clauseflowActions?.analyzeChangeImpact(id));
-  register('create_impact_review', 'Create a human-reviewable set of proposals for the analyzed policy change. Proposals remain drafts until separately approved.', schemas.none, () => window.__clauseflowActions?.createImpactReview());
-  register('approve_proposal', 'Approve one pending change proposal after human review. Use only when the user has explicitly selected the proposal.', schemas.id, ({ id }) => window.__clauseflowActions?.approveProposal(id));
-  register('reject_proposal', 'Reject one pending change proposal and preserve the decision in history.', schemas.id, ({ id }) => window.__clauseflowActions?.rejectProposal(id));
-  register('generate_traceability_report', 'Generate a structured readiness report from the current approved state, unresolved gaps, evidence, and decision history.', schemas.none, () => window.__clauseflowActions?.generateTraceabilityReport());
-  window.__clauseflowRegistered = true;
-  return true;
+type RippleActions = { getGraph:()=>unknown; analyzeImpact:()=>unknown; calculateReadiness:()=>unknown; createReview:()=>unknown; explainFinding:(id:string)=>unknown; approveProposal:(id:string)=>unknown; rejectProposal:(id:string)=>unknown };
+declare global { interface Window { __rippleActions?:RippleActions; __rippleRegistered?:boolean } interface Document { modelContext?:{registerTool:(tool:{name:string;description:string;inputSchema:object;execute:(input:Record<string,string>)=>unknown})=>void} } }
+const noInput={type:'object',properties:{}}; const idInput={type:'object',properties:{id:{type:'string',description:'Stable RippleTrace finding or proposal identifier'}},required:['id']};
+export function registerRippleTools(actions:RippleActions){window.__rippleActions=actions;if(!document.modelContext||window.__rippleRegistered)return false;const r=(name:string,description:string,inputSchema:object,execute:(i:Record<string,string>)=>unknown)=>document.modelContext?.registerTool({name,description,inputSchema,execute});
+  r('get_traceability_graph','Return the current Wexler Systems policy-to-evidence graph with source-system provenance. Read-only.',noInput,()=>window.__rippleActions?.getGraph());
+  r('analyze_change_impact','Deterministically compare proposed AC-2 v3 assertions with controls, tests, exceptions, evidence, and work. Derives findings and changes nothing.',noInput,()=>window.__rippleActions?.analyzeImpact());
+  r('calculate_readiness','Calculate the weighted assurance-readiness score and its component breakdown. Read-only.',noInput,()=>window.__rippleActions?.calculateReadiness());
+  r('create_impact_review','Turn derived findings into individually reviewable draft proposals. Does not approve any proposal.',noInput,()=>window.__rippleActions?.createReview());
+  r('explain_finding','Explain exactly which expected and observed assertions produced one finding.',idInput,({id})=>window.__rippleActions?.explainFinding(id));
+  r('approve_proposal','Approve one selected draft proposal as the named human reviewer. Use only after explicit user selection.',idInput,({id})=>window.__rippleActions?.approveProposal(id));
+  r('reject_proposal','Reject one selected draft proposal and preserve the human decision.',idInput,({id})=>window.__rippleActions?.rejectProposal(id));
+  window.__rippleRegistered=true;return true;
 }

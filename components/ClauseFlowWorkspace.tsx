@@ -1,150 +1,94 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { IMPACT_PROPOSALS, INITIAL_STATE, REVISED_STATEMENT } from '@/lib/demo-data';
-import type { DemoState, Proposal, Requirement, Status } from '@/lib/types';
-import { registerClauseFlowTools } from '@/lib/webmcp';
+import { runRippleAnalysis, proposalForFinding, proposedRequirement } from '@/lib/ripple/scenario';
+import { registerRippleTools } from '@/lib/webmcp';
+import type { Entity, Finding, SourceSystem, WorkItem } from '@/lib/ripple/types';
 
-type View = 'standards' | 'graph' | 'board' | 'history';
-const viewLabels: Record<View, string> = { standards: 'Standards workspace', graph: 'Traceability graph', board: 'Execution board', history: 'Decision history' };
-const icons: Record<View, string> = { standards: '§', graph: '⌘', board: '▦', history: '↺' };
+type View = 'overview' | 'change' | 'impact' | 'execution' | 'evidence';
+type Decision = 'pending' | 'approved' | 'rejected';
 
-function cloneInitial(): DemoState { return JSON.parse(JSON.stringify(INITIAL_STATE)); }
+const nav: { id: View; label: string; number: string }[] = [
+  { id: 'overview', label: 'Workspace', number: '01' },
+  { id: 'change', label: 'Policy change', number: '02' },
+  { id: 'impact', label: 'Impact review', number: '03' },
+  { id: 'execution', label: 'Execution', number: '04' },
+  { id: 'evidence', label: 'Evidence map', number: '05' },
+];
+
+const sourceLabels: Record<SourceSystem, string> = {
+  confluence:'Confluence', google_sheets:'Google Sheets', jira:'Jira', azure_boards:'Azure Boards', sharepoint:'SharePoint', github_actions:'GitHub Actions', azure_pipelines:'Azure Pipelines', entra_id:'Microsoft Entra ID', okta:'Okta', aws:'AWS', azure:'Azure', terraform_cloud:'Terraform Cloud', splunk:'Splunk', datadog:'Datadog', servicenow:'ServiceNow', vanta:'Vanta', throughline:'RippleTrace',
+};
+
+const sourceGroups = [
+  { label:'Policy', sources:['confluence'] as SourceSystem[], note:'Wexler Security Standard v4.2' },
+  { label:'Controls', sources:['google_sheets'] as SourceSystem[], note:'SOC 2 and ISO control matrix' },
+  { label:'Delivery', sources:['jira','azure_boards'] as SourceSystem[], note:'Two engineering organizations' },
+  { label:'Decisions', sources:['sharepoint'] as SourceSystem[], note:'Architecture decision records' },
+  { label:'Verification', sources:['github_actions','azure_pipelines'] as SourceSystem[], note:'Automated tests and attestations' },
+  { label:'Identity', sources:['entra_id','okta'] as SourceSystem[], note:'Corporate and acquired business unit' },
+  { label:'Infrastructure', sources:['aws','azure','terraform_cloud'] as SourceSystem[], note:'Commercial and Gov workloads' },
+  { label:'Operations', sources:['splunk','datadog','servicenow','vanta'] as SourceSystem[], note:'Logs, exceptions, continuous monitoring' },
+];
 
 export default function ClauseFlowWorkspace() {
-  const [state, setState] = useState<DemoState>(cloneInitial);
-  const [view, setView] = useState<View>('standards');
-  const [selectedRequirement, setSelectedRequirement] = useState('IDS-01');
+  const analysis = useMemo(runRippleAnalysis, []);
+  const proposals = useMemo(() => analysis.impact.findings.map(proposalForFinding), [analysis]);
+  const [view, setView] = useState<View>('overview');
+  const [analyzed, setAnalyzed] = useState(false);
+  const [decisions, setDecisions] = useState<Record<string, Decision>>({});
+  const [activity, setActivity] = useState<string[]>(['Workspace loaded from 16 represented systems of record.']);
   const [toast, setToast] = useState('');
-  const [toolsReady, setToolsReady] = useState(false);
 
-  const readiness = state.analyzed ? Math.min(92, 61 + state.proposals.filter((p) => p.status === 'approved').length * 6) : 92;
-  const selected = state.requirements.find((r) => r.id === selectedRequirement) ?? state.requirements[0];
-  const unresolved = state.proposals.filter((p) => p.status === 'pending').length;
+  const decided = Object.values(decisions).filter((x) => x !== 'pending').length;
+  const approved = Object.values(decisions).filter((x) => x === 'approved').length;
+  const readiness = analyzed ? Math.min(analysis.baseline.score, analysis.revised.score + approved) : analysis.baseline.score;
 
-  const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 2600); };
-  const analyze = () => {
-    setState((current) => ({
-      ...current,
-      analyzed: true,
-      requirements: current.requirements.map((r) => r.id === 'IDS-01' ? { ...r, previousStatement: r.statement, statement: REVISED_STATEMENT, version: 2, effectiveDate: '2026-09-15', status: 'affected' } : r.id === 'IDS-02' ? { ...r, status: 'affected' } : r),
-      controls: current.controls.map((c) => ['CTRL-MFA-01', 'CTRL-REV-01', 'CTRL-BRG-01'].includes(c.id) ? { ...c, status: 'affected' } : c),
-      exceptions: current.exceptions.map((e) => ({ ...e, status: 'needs-review' })),
-      proposals: current.proposals.length ? current.proposals : IMPACT_PROPOSALS,
-    }));
-    setSelectedRequirement('IDS-01');
-    notify('Impact review created — approved records remain unchanged.');
-  };
-
-  const decide = (proposalId: string, outcome: 'approved' | 'rejected') => {
-    setState((current) => {
-      const proposal = current.proposals.find((p) => p.id === proposalId);
-      if (!proposal || proposal.status !== 'pending') return current;
-      const now = new Date().toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
-      return {
-        ...current,
-        proposals: current.proposals.map((p) => p.id === proposalId ? { ...p, status: outcome } : p),
-        decisions: [{ id: `DEC-${String(current.decisions.length + 1).padStart(3, '0')}`, action: `${outcome === 'approved' ? 'Approved' : 'Rejected'}: ${proposal.title}`, actor: 'Avery Morgan', timestamp: now, rationale: outcome === 'approved' ? proposal.reason : 'Rejected during human impact review; no operational record changed.' }, ...current.decisions],
-      };
-    });
-    notify(`Proposal ${outcome}. Decision history updated.`);
-  };
-
-  const report = () => ({ organization: 'Northstar Financial (synthetic)', standard: 'Northstar Identity Security Standard', readiness, pendingProposals: unresolved, coveredRequirements: state.requirements.filter((r) => r.status === 'covered').length, totalRequirements: state.requirements.length, evidence: state.evidence, decisions: state.decisions });
+  const notify = (message:string) => { setToast(message); window.setTimeout(() => setToast(''), 2400); };
+  const runAnalysis = () => { setAnalyzed(true); setView('impact'); setActivity((a) => [`Derived ${analysis.impact.findings.length} findings from AC-2 v2 → v3.`, ...a]); notify('Analysis complete. No approved source record was changed.'); };
+  const decide = (id:string, decision:Decision) => { setDecisions((d) => ({...d,[id]:decision})); const p=proposals.find((x)=>x.id===id); setActivity((a)=>[`${decision === 'approved' ? 'Approved' : 'Rejected'} ${id}: ${p?.title}`, ...a]); notify(`${id} ${decision} by Dana Lindqvist.`); };
+  const reset = () => { setView('overview'); setAnalyzed(false); setDecisions({}); setActivity(['Workspace loaded from 16 represented systems of record.']); notify('Demo reset to approved baseline.'); };
 
   useEffect(() => {
-    const registered = registerClauseFlowTools({
-      getRequirement: (id) => state.requirements.find((r) => r.id === id) ?? { error: 'Requirement not found' },
-      getTraceabilityGraph: () => ({ requirements: state.requirements, controls: state.controls, workItems: state.workItems, evidence: state.evidence }),
-      analyzeChangeImpact: (id) => { if (id !== 'IDS-01') return { error: 'The demo scenario supports IDS-01.' }; analyze(); return { requirementId: id, summary: 'The revision affects authentication strength, review cadence, implementation work, evidence, and one exception.', proposalCount: IMPACT_PROPOSALS.length }; },
-      createImpactReview: () => { analyze(); return { status: 'draft', proposals: IMPACT_PROPOSALS }; },
-      approveProposal: (id) => { decide(id, 'approved'); return { id, status: 'approved', actor: 'Avery Morgan' }; },
-      rejectProposal: (id) => { decide(id, 'rejected'); return { id, status: 'rejected', actor: 'Avery Morgan' }; },
-      generateTraceabilityReport: report,
+    registerRippleTools({
+      getGraph: () => analysis.snapshot,
+      analyzeImpact: () => { runAnalysis(); return analysis.impact; },
+      calculateReadiness: () => analyzed ? analysis.revised : analysis.baseline,
+      createReview: () => { runAnalysis(); return proposals; },
+      explainFinding: (id) => analysis.impact.findings.find((f)=>f.id===id) ?? {error:'Finding not found'},
+      approveProposal: (id) => { decide(id,'approved'); return {id,status:'approved',reviewedBy:'d.lindqvist@wexler.example'}; },
+      rejectProposal: (id) => { decide(id,'rejected'); return {id,status:'rejected',reviewedBy:'d.lindqvist@wexler.example'}; },
     });
-    setToolsReady(registered || Boolean(document.modelContext));
-  }, [state]);
+  }, [analysis, analyzed, proposals]);
 
-  const reset = () => { setState(cloneInitial()); setView('standards'); setSelectedRequirement('IDS-01'); notify('Synthetic workspace reset.'); };
-
-  return (
-    <main className="app-shell">
-      <header className="topbar">
-        <div className="brand"><div className="brand-mark">CF</div><div><strong>ClauseFlow</strong><span>Policy-to-execution workspace</span></div></div>
-        <div className="top-actions"><span className="synthetic">● Synthetic workspace</span><span className={`webmcp ${toolsReady ? 'ready' : ''}`}>{toolsReady ? 'WebMCP ready' : 'WebMCP preview'}</span><button className="reset" onClick={reset}>Reset demo</button><span className="avatar">AM</span></div>
-      </header>
-
-      <div className="workspace">
-        <aside className="sidebar">
-          <p className="eyebrow">Northstar Financial</p><p className="workspace-caption">Identity assurance program</p>
-          <nav>{(Object.keys(viewLabels) as View[]).map((key) => <button key={key} onClick={() => setView(key)} className={view === key ? 'active' : ''}><span>{icons[key]}</span>{viewLabels[key]}</button>)}</nav>
-          <div className="readiness"><div className="readiness-head"><span>Coverage readiness</span><strong>{readiness}%</strong></div><div className="progress"><i style={{ width: `${readiness}%` }} /></div><p>{state.analyzed ? unresolved ? `${unresolved} decisions need review` : 'All proposed changes reviewed' : 'Current approved standard'}</p></div>
-          <div className="privacy-note"><strong>Safe demo data</strong><p>All people, policies, evidence, and systems are fictional.</p></div>
-        </aside>
-
-        <section className="main-panel">
-          {view === 'standards' && <StandardsView state={state} selected={selected} onSelect={setSelectedRequirement} onAnalyze={analyze} />}
-          {view === 'graph' && <GraphView state={state} />}
-          {view === 'board' && <BoardView state={state} />}
-          {view === 'history' && <HistoryView state={state} readiness={readiness} />}
-        </section>
-
-        <ImpactPanel state={state} onAnalyze={analyze} onDecide={decide} onViewHistory={() => setView('history')} />
-      </div>
-      {toast && <div className="toast" role="status">{toast}</div>}
-    </main>
-  );
-}
-
-function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; title: string; description: string; action?: React.ReactNode }) {
-  return <header className="page-header"><div><p className="eyebrow green">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{action}</header>;
-}
-
-function StatusPill({ status }: { status: Status }) { return <span className={`status ${status}`}>{status === 'affected' ? 'Needs review' : status}</span>; }
-
-function StandardsView({ state, selected, onSelect, onAnalyze }: { state: DemoState; selected: Requirement; onSelect: (id: string) => void; onAnalyze: () => void }) {
-  return <>
-    <PageHeader eyebrow="Northstar identity security standard" title="Standards workspace" description="Turn policy requirements into controls, owned work, tests, and evidence—without losing the decisions in between." action={<button className="primary" onClick={onAnalyze}>{state.analyzed ? 'Re-run analysis' : 'Analyze policy change'}</button>} />
-    {state.analyzed && <div className="change-banner"><span>Revision detected</span><p>IDS-01 moved from broad MFA to phishing-resistant authentication, and access reviews moved from annual to quarterly.</p></div>}
-    <div className="content-grid">
-      <section className="card requirements-card"><div className="card-title"><div><strong>Requirements</strong><span>Version {state.analyzed ? '2.0' : '1.0'} · {state.analyzed ? 'Effective Sep 15, 2026' : 'Approved Jul 1, 2026'}</span></div><span>{state.requirements.length} requirements</span></div>
-        <div className="requirement-list">{state.requirements.map((r) => <button key={r.id} onClick={() => onSelect(r.id)} className={selected.id === r.id ? 'selected' : ''}><i className={r.status} /><div><span>{r.id}</span><strong>{r.title}</strong><p>{r.statement}</p></div><StatusPill status={r.status} /></button>)}</div>
+  return <main className="rt-app">
+    <header className="rt-topbar"><div className="rt-brand"><div className="rt-mark">R</div><div><strong>RippleTrace</strong><span>Policy-to-execution intelligence</span></div></div><div className="rt-company"><span className="environment">Synthetic enterprise demo</span><div><strong>Wexler Systems</strong><span>Security Assurance</span></div><div className="rt-avatar">DL</div></div></header>
+    <div className="rt-layout">
+      <aside className="rt-sidebar"><div className="standard-card"><span>Active standard</span><strong>WSEC-1 · v4.2</strong><p>SOC 2 · ISO 27001 · FedRAMP Moderate</p></div><nav>{nav.map((n)=><button key={n.id} className={view===n.id?'active':''} onClick={()=>setView(n.id)}><span>{n.number}</span>{n.label}{n.id==='impact'&&analyzed&&<b>{analysis.impact.findings.length}</b>}</button>)}</nav><div className="sidebar-footer"><div><span>Agent surface</span><strong>7 WebMCP tools</strong></div><button onClick={reset}>Reset demo</button></div></aside>
+      <section className="rt-main">
+        {view==='overview'&&<Overview onStart={()=>setView('change')} baseline={analysis.baseline.score} />}
+        {view==='change'&&<ChangeView before={analysis.before.text} onAnalyze={runAnalysis} />}
+        {view==='impact'&&<ImpactView analyzed={analyzed} findings={analysis.impact.findings} decisions={decisions} onAnalyze={runAnalysis} onDecide={decide} />}
+        {view==='execution'&&<ExecutionView entities={analysis.snapshot.entities} findings={analysis.impact.findings} analyzed={analyzed} approved={approved} />}
+        {view==='evidence'&&<EvidenceView entities={analysis.snapshot.entities} findings={analysis.impact.findings} analyzed={analyzed} />}
       </section>
-      <aside className="card detail-card"><div className="detail-id">{selected.id} · v{selected.version}.0</div><h2>{selected.title}</h2><p className="statement">{selected.statement}</p>{selected.previousStatement && <div className="previous"><span>Previous approved wording</span><p>{selected.previousStatement}</p></div>}<dl><div><dt>Owner</dt><dd>{selected.owner}</dd></div><div><dt>Effective</dt><dd>{selected.effectiveDate}</dd></div><div><dt>Status</dt><dd><StatusPill status={selected.status} /></dd></div></dl></aside>
-    </div>
-  </>;
+      <aside className="rt-rail"><Readiness score={readiness} baseline={analysis.baseline.score} after={analysis.revised.score} analyzed={analyzed} components={(analyzed?analysis.revised:analysis.baseline).components}/><Journey view={view} analyzed={analyzed} decided={decided} total={proposals.length}/><div className="activity"><div className="section-label">Recent activity</div>{activity.slice(0,4).map((a,i)=><p key={`${a}-${i}`}><i />{a}</p>)}</div></aside>
+    </div>{toast&&<div className="rt-toast" role="status">{toast}</div>}
+  </main>;
 }
 
-function GraphView({ state }: { state: DemoState }) {
-  const req = state.requirements.find((r) => r.id === 'IDS-01')!; const control = state.controls.find((c) => c.id === 'CTRL-MFA-01')!; const work = state.workItems.find((w) => w.id === 'WORK-37')!; const evidence = state.evidence.find((e) => e.id === 'EVD-104')!;
-  return <><PageHeader eyebrow="Semantic lineage" title="Traceability graph" description="Every line explains why work exists and what proves that a requirement is operating." />
-    <section className="card graph-card"><div className="graph-legend"><span><i className="covered" />Covered</span><span><i className="affected" />Affected</span><span><i className="proposed" />Agent proposed</span></div><div className="graph-flow">
-      <GraphNode type="Requirement" id={req.id} title={req.title} status={req.status} /><Connector label="implemented by" affected={state.analyzed} /><GraphNode type="Control" id={control.id} title={control.title} status={control.status} /><Connector label="delivered by" affected={state.analyzed} /><GraphNode type="Work" id={work.id} title={work.title} status={state.analyzed ? 'affected' : 'covered'} /><Connector label="proved by" affected={state.analyzed} /><GraphNode type="Evidence" id={evidence.id} title={evidence.title} status={state.analyzed ? 'affected' : 'covered'} />
-    </div>{state.analyzed && <div className="graph-callout"><strong>Semantic break detected</strong><p>The evidence proves MFA enrollment, but it does not prove that enrolled factors are phishing-resistant.</p></div>}</section>
-  </>;
-}
+function PageTitle({kicker,title,description,action}:{kicker:string;title:string;description:string;action?:React.ReactNode}){return <div className="page-title"><div><span>{kicker}</span><h1>{title}</h1><p>{description}</p></div>{action}</div>}
 
-function GraphNode({ type, id, title, status }: { type: string; id: string; title: string; status: Status }) { return <div className={`graph-node ${status}`}><span>{type}</span><strong>{id}</strong><p>{title}</p></div>; }
-function Connector({ label, affected }: { label: string; affected: boolean }) { return <div className={`connector ${affected ? 'affected' : ''}`}><span>{label}</span><i>→</i></div>; }
+function Overview({onStart,baseline}:{onStart:()=>void;baseline:number}){return <><PageTitle kicker="One connected assurance layer" title="See how one policy change ripples through the enterprise." description="RippleTrace connects the truth already living across Wexler Systems. It does not replace systems of record—it makes their obligations, evidence, and decisions traceable." action={<button className="rt-primary" onClick={onStart}>Review proposed change →</button>}/><div className="overview-hero"><div><span className="hero-kicker">Current assurance posture</span><strong>{baseline}%</strong><p>Readiness is calculated from control sufficiency, verification, evidence freshness, exception health, and unresolved proposals.</p></div><div className="hero-flow"><span>Policy</span><i>→</i><span>Controls</span><i>→</i><span>Work</span><i>→</i><span>Proof</span></div></div><section className="surface"><div className="surface-head"><div><span className="section-label">Where the truth lives</span><h2>16 systems. One traceable story.</h2></div><span>Represented connectors · no live enterprise data</span></div><div className="source-grid">{sourceGroups.map((g)=><article key={g.label}><div className="source-icon">{g.label.slice(0,2).toUpperCase()}</div><div><span>{g.label}</span><strong>{g.sources.map((s)=>sourceLabels[s]).join(' · ')}</strong><p>{g.note}</p></div></article>)}</div></section></>}
 
-function BoardView({ state }: { state: DemoState }) {
-  const items = [...state.workItems];
-  if (state.proposals.some((p) => p.id === 'PROP-02' && p.status === 'approved')) items.unshift({ id: 'WORK-NEW-01', title: 'Issue passkeys to privileged workforce', controlId: 'CTRL-MFA-01', owner: 'Identity Team', sprint: 'Sprint 44', status: 'Backlog', provenance: 'agent', acceptanceCriteria: ['Passkeys issued to all privileged human accounts'] });
-  if (state.proposals.some((p) => p.id === 'PROP-03' && p.status === 'approved')) items.unshift({ id: 'WORK-NEW-02', title: 'Move access reviews to quarterly cadence', controlId: 'CTRL-REV-01', owner: 'Governance Team', sprint: 'Sprint 44', status: 'Backlog', provenance: 'agent', acceptanceCriteria: ['Review scheduled every 90 days'] });
-  return <><PageHeader eyebrow="Connected delivery" title="Execution board" description="Sprint work retains its policy origin, acceptance criteria, and approval provenance." /><section className="board">{(['Backlog','In progress','Completed'] as const).map((column) => <div className="board-column" key={column}><div className="column-title"><strong>{column}</strong><span>{items.filter((i) => i.status === column).length}</span></div>{items.filter((i) => i.status === column).map((item) => <article className="work-card" key={item.id}><div className="work-meta"><span>{item.id}</span>{item.provenance === 'agent' && <b>Agent proposed · approved</b>}</div><h3>{item.title}</h3><p>{item.owner} · {item.sprint}</p><div className="linked">↳ {item.controlId}</div></article>)}</div>)}</section></>;
-}
+function ChangeView({before,onAnalyze}:{before:string;onAnalyze:()=>void}){return <><PageTitle kicker="Guided scenario · Step 1" title="A security requirement is about to change." description="Compare the approved policy with the proposed obligation. The agent will translate the language into machine-comparable assertions, then derive—not guess—the downstream impact."/><div className="change-compare"><article><div className="compare-head"><span>Approved · AC-2 v2</span><b>Confluence</b></div><h2>Privileged access authentication</h2><p>{before}</p><div className="assertions"><span>MFA required</span><span>Weak fallback permitted</span><span>Humans + contractors</span></div></article><div className="ripple-arrow">→</div><article className="proposed"><div className="compare-head"><span>Proposed · AC-2 v3</span><b>Draft</b></div><h2>Privileged access authentication</h2><p>{proposedRequirement.text}</p><div className="assertions"><span>Phishing-resistant only</span><span>No fallback</span><span>90-day review</span><span>Workload identities added</span></div></article></div><div className="analysis-callout"><div><span className="section-label">Safe analysis boundary</span><h3>The analysis reads every connected record. It changes none of them.</h3><p>Findings become proposals. Only a named human reviewer can move a proposal into approved state.</p></div><button className="rt-primary" onClick={onAnalyze}>Analyze downstream impact</button></div></>}
 
-function HistoryView({ state, readiness }: { state: DemoState; readiness: number }) {
-  const report = useMemo(() => ({ coverage: `${readiness}%`, pending: state.proposals.filter((p) => p.status === 'pending').length, approved: state.proposals.filter((p) => p.status === 'approved').length, rejected: state.proposals.filter((p) => p.status === 'rejected').length }), [state, readiness]);
-  return <><PageHeader eyebrow="Human accountability" title="Decision history" description="Every agent proposal remains attributable, reviewable, and separate from approved company truth." action={<button className="secondary" onClick={() => window.print()}>Print report</button>} /><div className="report-strip">{Object.entries(report).map(([k,v]) => <div key={k}><strong>{v}</strong><span>{k}</span></div>)}</div><section className="card timeline">{state.decisions.map((d) => <article key={d.id}><div className="timeline-dot" /><div><span>{d.id} · {d.timestamp}</span><h3>{d.action}</h3><p>{d.rationale}</p><small>Decision owner: {d.actor}</small></div></article>)}</section></>;
-}
+function ImpactView({analyzed,findings,decisions,onAnalyze,onDecide}:{analyzed:boolean;findings:Finding[];decisions:Record<string,Decision>;onAnalyze:()=>void;onDecide:(id:string,d:Decision)=>void}){if(!analyzed)return <EmptyImpact onAnalyze={onAnalyze}/>; const counts=findings.reduce<Record<string,number>>((a,f)=>({...a,[f.kind]:(a[f.kind]||0)+1}),{});return <><PageTitle kicker="Guided scenario · Step 2" title="Thirteen consequences, derived and ready for review." description="Each finding shows the exact expectation, observed state, and records compared. Approve or reject proposals individually; analysis alone never changes company truth."/><div className="impact-summary">{[['New scope',counts.coverage_gap||0],['Controls',counts.control_insufficient||0],['Tests',counts.test_invalidated||0],['Exceptions',counts.exception_conflict||0],['Work items',counts.work_stale||0]].map(([l,n])=><div key={String(l)}><strong>{n}</strong><span>{l}</span></div>)}</div><div className="finding-list">{findings.map((f)=>{const p=proposalForFinding(f);const d=decisions[p.id]||'pending';return <article key={f.id} className={`finding ${d}`}><div className={`severity ${f.severity}`}>{f.severity}</div><div className="finding-body"><div><span>{f.id} · {f.kind.replaceAll('_',' ')}</span><h3>{f.summary}</h3></div><details><summary>Why was this flagged?</summary><div className="derivation"><p><b>Expected</b>{f.derivation.expected}</p><p><b>Observed</b>{f.derivation.observed}</p><small>Compared: {f.derivation.comparedEntityIds.join(' · ')}</small></div></details><div className="proposal-line"><div><span>Proposed response</span><strong>{p.title}</strong></div>{d==='pending'?<div><button onClick={()=>onDecide(p.id,'rejected')}>Reject</button><button onClick={()=>onDecide(p.id,'approved')}>Approve</button></div>:<b className={d}>✓ {d} by Dana Lindqvist</b>}</div></div></article>})}</div></>}
+function EmptyImpact({onAnalyze}:{onAnalyze:()=>void}){return <div className="empty-impact"><div className="empty-symbol">↯</div><span className="section-label">No impact review yet</span><h1>Start with the policy change.</h1><p>RippleTrace will compare the proposed AC-2 obligations against controls, tests, exceptions, evidence, and in-flight work.</p><button className="rt-primary" onClick={onAnalyze}>Run prepared analysis</button></div>}
 
-function ImpactPanel({ state, onAnalyze, onDecide, onViewHistory }: { state: DemoState; onAnalyze: () => void; onDecide: (id: string, outcome: 'approved' | 'rejected') => void; onViewHistory: () => void }) {
-  if (!state.analyzed) return <aside className="impact-panel empty"><div className="impact-badge">Agent-ready workflow</div><div className="impact-illustration"><span>§</span><i>→</i><span>✓</span></div><h2>Trace policy into execution</h2><p>Run the prepared revision scenario to see how ClauseFlow finds downstream gaps without changing approved records.</p><button className="primary full" onClick={onAnalyze}>Run impact analysis</button><div className="tool-list"><strong>WebMCP surface</strong><span>7 structured tools</span><span>Human approval boundary</span><span>Visible shared state</span></div></aside>;
-  const counts = { controls: 3, work: 2, tests: 1, exceptions: 1 };
-  return <aside className="impact-panel"><div className="impact-top"><span className="impact-badge">Impact review</span><span>Draft</span></div><h2>Policy change detected</h2><p>Review the agent’s proposed consequences. Nothing becomes company truth until you decide.</p><div className="impact-counts">{Object.entries(counts).map(([label,n]) => <div key={label}><strong>{n}</strong><span>{label}</span></div>)}</div><div className="proposal-list">{state.proposals.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} onDecide={onDecide} />)}</div><button className="history-link" onClick={onViewHistory}>Open decision history →</button></aside>;
-}
+function ExecutionView({entities,findings,analyzed,approved}:{entities:Entity[];findings:Finding[];analyzed:boolean;approved:number}){const work=entities.filter((e):e is WorkItem=>e.kind==='work_item');const affected=new Set(findings.filter((f)=>f.kind==='work_stale').flatMap((f)=>f.entityIds));return <><PageTitle kicker="Connected delivery" title="Policy intent stays attached to sprint work." description="Jira and Azure Boards remain the systems of record. RippleTrace exposes when existing acceptance criteria were written for an obligation that has since moved."/><div className="execution-stats"><span>{work.length} linked work items</span><span>{analyzed?affected.size:0} stale after change</span><span>{approved} approved responses</span></div><div className="work-columns">{['backlog','in_progress','in_review','done'].map((status)=><section key={status}><div className="column-head"><strong>{status.replace('_',' ')}</strong><span>{work.filter((w)=>w.status===status).length}</span></div>{work.filter((w)=>w.status===status).map((w)=><article key={w.id} className={analyzed&&affected.has(w.id)?'affected':''}><div><span>{sourceLabels[w.sourceRef.system]}</span><b>{w.sourceRef.ref}</b></div><h3>{w.title}</h3><p>{w.ownerTeam} · {w.assignee||'Unassigned'}</p>{analyzed&&affected.has(w.id)&&<em>Acceptance criteria may be stale</em>}</article>)}</section>)}</div></>}
 
-function ProposalCard({ proposal, onDecide }: { proposal: Proposal; onDecide: (id: string, outcome: 'approved' | 'rejected') => void }) {
-  return <article className={`proposal ${proposal.status}`}><div><span>{proposal.kind} · {proposal.id}</span><strong>{proposal.title}</strong><p>{proposal.reason}</p></div>{proposal.status === 'pending' ? <div className="proposal-actions"><button onClick={() => onDecide(proposal.id, 'rejected')}>Reject</button><button onClick={() => onDecide(proposal.id, 'approved')}>Approve</button></div> : <div className="decision-result">{proposal.status === 'approved' ? '✓ Approved by human' : '× Rejected by human'}</div>}</article>;
-}
+function EvidenceView({entities,findings,analyzed}:{entities:Entity[];findings:Finding[];analyzed:boolean}){const req=entities.find((e)=>e.id==='AC-2@2')!;const control=entities.find((e)=>e.id==='CTL-114')!;const test=entities.find((e)=>e.id==='test-entra-ca-mfa-required')!;const evidence=entities.find((e)=>e.id==='EV-01')!;return <><PageTitle kicker="Proof with provenance" title="Follow the claim from policy to evidence." description="Every relationship records its source, rationale, creator, and verification state. A passing test can still stop proving a requirement when the requirement becomes stronger."/><div className="evidence-chain">{[req,control,test,evidence].map((e,i)=><div key={e.id} className={analyzed&&['CTL-114','test-entra-ca-mfa-required','EV-01'].includes(e.id)?'affected':''}><span>{e.kind.replace('_',' ')}</span><strong>{e.id}</strong><h3>{e.title}</h3><p>{sourceLabels[e.sourceRef.system]} · {e.sourceRef.ref}</p>{i<3&&<i>→</i>}</div>)}</div>{analyzed&&<div className="proof-break"><div>!</div><section><span className="section-label">Proof gap</span><h2>The test is green. The requirement is not proven.</h2><p>{findings.find((f)=>f.kind==='test_invalidated')?.summary}</p></section></div>}<section className="surface provenance-table"><div className="surface-head"><div><span className="section-label">Trace provenance</span><h2>Every link can explain itself.</h2></div></div>{[['CTL-114 → AC-2','Control implements requirement','Google Sheets · Wexler SOC2 matrix','Verified Jun 2026'],['Test → CTL-114','Test verifies control','GitHub Actions · ca-policy.yml','Passing Aug 2026'],['EV-01 → CTL-114','Export evidences configuration','Microsoft Entra ID · CA-0031','Collected Aug 2026']].map((r)=><div className="prov-row" key={r[0]}>{r.map((x,i)=><span key={x} className={i===0?'mono':''}>{x}</span>)}</div>)}</section></>}
+
+function Readiness({score,baseline,after,analyzed,components}:{score:number;baseline:number;after:number;analyzed:boolean;components:{label:string;score:number;weight:number}[]}){return <div className="readiness-panel"><div className="section-label">Assurance readiness</div><div className="score"><strong>{score}</strong><span>/100</span></div><div className="score-bar"><i style={{width:`${score}%`}}/></div>{analyzed&&<div className="score-delta"><span>Before {baseline}</span><b>→</b><span>After {after}</span></div>}<div className="component-list">{components.map((c)=><div key={c.label}><span>{c.label}<small>{Math.round(c.weight*100)}%</small></span><strong>{Math.round(c.score*100)}%</strong></div>)}</div></div>}
+function Journey({view,analyzed,decided,total}:{view:View;analyzed:boolean;decided:number;total:number}){const current=nav.findIndex((n)=>n.id===view);return <div className="journey"><div className="section-label">Demo journey</div>{nav.slice(1).map((n,i)=><button key={n.id} className={current>=i+1?'reached':''}><i>{current>i+1||n.id==='impact'&&analyzed?'✓':i+1}</i><span>{n.label}{n.id==='impact'&&analyzed&&<small>{decided}/{total} reviewed</small>}</span></button>)}</div>}

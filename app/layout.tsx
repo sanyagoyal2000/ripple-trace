@@ -13,10 +13,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'ClauseFlow — Policy to Execution',
-  description: 'A human-governed policy-to-execution workspace powered by WebMCP.',
-  openGraph: { title: 'ClauseFlow', description: 'From policy to provable execution.', images: ['/og.png'] },
-  twitter: { card: 'summary_large_image', title: 'ClauseFlow', description: 'From policy to provable execution.', images: ['/og.png'] },
+  title: 'RippleTrace — Policy-to-Execution Intelligence',
+  description: 'See how one policy change ripples through Wexler Systems across controls, work, tests, evidence, exceptions, and decisions.',
+  openGraph: { title: 'RippleTrace', description: 'See how one policy change ripples through the enterprise.', images: ['/og.png'] },
+  twitter: { card: 'summary_large_image', title: 'RippleTrace', description: 'See how one policy change ripples through the enterprise.', images: ['/og.png'] },
 };
 
 export default function RootLayout({
