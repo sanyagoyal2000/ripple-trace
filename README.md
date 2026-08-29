@@ -37,7 +37,7 @@ Policy → Requirement → Control → Work → Test → Evidence
 
 The interface deliberately reveals complexity in stages:
 
-1. **Workspace** — explains Wexler Systems and where enterprise truth lives.
+1. **Connected systems** — lets judges open realistic, source-shaped previews for Confluence, Sheets, Jira, Azure Boards, SharePoint, CI pipelines, identity, Terraform, ServiceNow, and Vanta records.
 2. **Policy change** — compares approved AC-2 v2 with proposed AC-2 v3.
 3. **Impact review** — derives 13 findings and presents individually reviewable proposals.
 4. **Execution** — shows which Jira and Azure Boards work items now have stale acceptance criteria.
@@ -178,7 +178,7 @@ Then explain finding F-008.
 
 ## Three-minute presentation
 
-1. Introduce the 16 represented enterprise systems in the Workspace.
+1. Open Connected Systems and switch between source records so the audience immediately recognizes the fragmented enterprise landscape. These are deterministic demo representations, not live vendor accounts.
 2. Compare AC-2 v2 and v3 on Policy Change.
 3. Ask the browser agent to analyze without changing approved records.
 4. Show the readiness drop and 13 derived findings.
