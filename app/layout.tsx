@@ -1,5 +1,4 @@
 import type { Metadata } from 'next';
-import Script from 'next/script';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import './systems.css';
@@ -33,8 +32,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <Script src="/webmcp-origin-trial.js" strategy="beforeInteractive" />
-        <Script src="/webmcp-local.js" strategy="beforeInteractive" />
+        {/* Third-party origin-trial tokens must execute from an external script during parsing. */}
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/webmcp-origin-trial.js"></script>
+        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
+        <script src="/webmcp-local.js"></script>
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
