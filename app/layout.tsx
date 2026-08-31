@@ -29,7 +29,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head><script src="/webmcp-local.js"></script></head>
+      <head>
+        <script src="/webmcp-origin-trial.js"></script>
+        <script src="/webmcp-local.js"></script>
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
