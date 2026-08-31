@@ -1,9 +1,12 @@
 import type { Metadata } from 'next';
+import Script from 'next/script';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import './systems.css';
 import './record-detail.css';
 import './agent-demo.css';
+import './change-room.css';
+import './investigation.css';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -30,8 +33,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        <script src="/webmcp-origin-trial.js"></script>
-        <script src="/webmcp-local.js"></script>
+        <Script src="/webmcp-origin-trial.js" strategy="beforeInteractive" />
+        <Script src="/webmcp-local.js" strategy="beforeInteractive" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

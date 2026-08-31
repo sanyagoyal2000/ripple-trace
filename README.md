@@ -33,15 +33,17 @@ Policy → Requirement → Control → Work → Test → Evidence
                          ↘ Exception → Human decision
 ```
 
-## Guided user journey
+## Live change-room journey
 
-The interface deliberately reveals complexity in stages:
+The interface opens on one deeply modeled enterprise event rather than a populated dashboard:
 
-1. **Connected systems** — lets judges open realistic, source-shaped previews for Confluence, Sheets, Jira, Azure Boards, SharePoint, CI pipelines, identity, Terraform, ServiceNow, and Vanta records.
-2. **Policy change** — compares approved AC-2 v2 with proposed AC-2 v3.
-3. **Impact review** — derives 13 findings and presents individually reviewable proposals.
-4. **Execution** — shows which Jira and Azure Boards work items now have stale acceptance criteria.
-5. **Evidence map** — follows one claim from policy to control, test, and evidence, explaining why a green test may no longer prove the stronger requirement.
+1. **Incoming change** — Confluence event `AC2-CHG-2026-017` asks what will break if Wexler approves AC-2 v3.
+2. **Agent investigation** — granular WebMCP tools inspect the policy, bounded dependency chain, exact source records, findings, and readiness calculation.
+3. **Visible activity** — every WebMCP tool start, completion, and failure appears in the live investigation timeline.
+4. **Impact review** — deterministic comparisons derive 13 findings, each with exact record IDs and an evidence drawer.
+5. **Human decision** — draft proposals remain inert until Dana Lindqvist approves or rejects a specific proposal ID.
+6. **Governed execution** — approved proposals visibly change readiness, audit history, and downstream work state.
+7. **Reset** — **Reset Wexler scenario** restores the original unassessed event for repeatable judging.
 
 The right rail preserves context with a weighted readiness score, journey progress, and recent activity.
 
@@ -100,17 +102,23 @@ Coverage and verification are risk-weighted: critical 4, high 3, moderate 2, low
 
 ## WebMCP tools
 
-`lib/webmcp.ts` registers seven tools:
+`lib/webmcp.ts` registers thirteen granular tools. Each returns JSON-compatible structured data rather than a JSON string:
 
 | Tool | Purpose | Boundary |
 | --- | --- | --- |
-| `get_traceability_graph` | Read the cross-system graph and provenance | Read-only |
+| `get_policy_change` | Read the incoming Confluence change event | Read-only |
+| `list_connected_systems` | Discover systems and exact record IDs | Read-only |
+| `get_source_record` | Inspect one exact record and its provenance | Read-only |
+| `trace_ac2_dependencies` | Traverse the bounded AC-2 evidence chain | Read-only |
 | `analyze_change_impact` | Derive consequences of AC-2 v3 | Analysis only |
+| `list_impact_findings` | List grounded findings, optionally by severity | Read-only |
+| `explain_finding` | Return expected, observed, rules, and citations | Read-only |
 | `calculate_readiness` | Return weighted score and breakdown | Read-only |
 | `create_impact_review` | Convert findings into draft proposals | Draft-only |
-| `explain_finding` | Return expected, observed, and compared records | Read-only |
-| `approve_proposal` | Approve one selected proposal | Human-controlled mutation |
-| `reject_proposal` | Reject one selected proposal | Human-controlled mutation |
+| `list_remediation_proposals` | Inspect proposal targets and decision state | Read-only |
+| `approve_proposal` | Approve one explicitly selected proposal | Human-controlled mutation |
+| `reject_proposal` | Reject one explicitly selected proposal | Human-controlled mutation |
+| `reset_wexler_scenario` | Restore the repeatable synthetic scenario | Local demo mutation |
 
 The visual interface and WebMCP tools call the same analysis and decision functions.
 
@@ -171,21 +179,21 @@ npm run build
 ## Suggested WebMCP demo prompt
 
 ```text
-Analyze the proposed AC-2 change and create an impact review.
-Do not approve or reject any proposal.
-Then explain finding F-008.
+Investigate AC2-CHG-2026-017 using only this page's WebMCP tools. Inspect the
+policy change, trace AC-2 dependencies, analyze impact, calculate readiness,
+create draft remediation proposals, and explain F-008 with exact source-record
+citations. Do not approve or reject anything. Stop for my decision.
 ```
 
 ## Three-minute presentation
 
-1. Open Connected Systems and switch between source records so the audience immediately recognizes the fragmented enterprise landscape. These are deterministic demo representations, not live vendor accounts.
-2. Compare AC-2 v2 and v3 on Policy Change.
-3. Ask the browser agent to analyze without changing approved records.
-4. Show the readiness drop and 13 derived findings.
-5. Expand “Why was this flagged?” for the passing-but-invalidated test.
-6. Approve one proposal and reject another.
-7. Show affected Jira and Azure Boards work in Execution.
-8. Finish on Evidence Map with provenance and the WebMCP tool definitions.
+1. Begin on the incoming Confluence event and ask, “What breaks if we approve this?”
+2. Ask the browser agent to investigate using WebMCP while the live tool timeline fills.
+3. Show the readiness drop and 13 grounded findings.
+4. Open `F-008` and its GitHub, Entra, Sheets, and evidence records.
+5. Ask the agent to create proposals and stop at the human authority boundary.
+6. Approve one exact proposal ID and show readiness, audit, and execution state change.
+7. Finish on Evidence Map: the test is green, but the strengthened policy is not proven.
 
 ## Limitations
 
