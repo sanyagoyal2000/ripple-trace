@@ -6,6 +6,7 @@ import './record-detail.css';
 import './agent-demo.css';
 import './change-room.css';
 import './investigation.css';
+import './trace-graph.css';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -35,8 +36,6 @@ export default function RootLayout({
         {/* Third-party origin-trial tokens must execute from an external script during parsing. */}
         {/* eslint-disable-next-line @next/next/no-sync-scripts */}
         <script src="/webmcp-origin-trial.js"></script>
-        {/* eslint-disable-next-line @next/next/no-sync-scripts */}
-        <script src="/webmcp-local.js"></script>
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

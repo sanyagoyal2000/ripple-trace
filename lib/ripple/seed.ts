@@ -28,6 +28,16 @@ import type {
   TraceEdge,
   WorkItem,
 } from "./types";
+import {
+  extraControls,
+  extraDecisions,
+  extraEdges,
+  extraEvidence,
+  extraExceptions,
+  extraRequirements,
+  extraTests,
+  extraWorkItems,
+} from "./seed-extra";
 
 /** Demo "today". Fixed so readiness and staleness are reproducible for judges. */
 export const DEMO_TODAY: IsoDate = "2026-08-29";
@@ -1130,8 +1140,15 @@ export const seedEdges: TraceEdge[] = [
 export function seedSnapshot(): GraphSnapshot {
   return {
     entities: [
-      seedStandard,
+      { ...seedStandard, requirementIds: [...seedStandard.requirementIds, "IA-5", "SC-7", "PS-4", "MP-6"] },
       ...seedRequirements,
+      ...extraRequirements,
+      ...extraControls,
+      ...extraWorkItems,
+      ...extraTests,
+      ...extraEvidence,
+      ...extraExceptions,
+      ...extraDecisions,
       ...seedControls,
       ...seedWorkItems,
       ...seedTests,
@@ -1139,6 +1156,6 @@ export function seedSnapshot(): GraphSnapshot {
       ...seedExceptions,
       ...seedDecisions,
     ],
-    edges: seedEdges,
+    edges: [...seedEdges, ...extraEdges],
   };
 }

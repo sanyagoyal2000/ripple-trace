@@ -404,6 +404,7 @@ export interface TraceEdge {
 // ---------------------------------------------------------------------------
 
 export type ProposalKind =
+  | "requirement_version"
   | "control"
   | "control_update"
   | "work_item"

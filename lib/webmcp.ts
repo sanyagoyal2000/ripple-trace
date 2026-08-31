@@ -1,50 +1,197 @@
-type JsonRecord = Record<string, unknown>;
-export type RippleActions = {
-  getPolicyChange: () => unknown; listSystems: () => unknown; getSourceRecord: (id: string) => unknown;
-  traceRequirement: () => unknown; analyzeImpact: () => unknown; listFindings: (severity?: string) => unknown;
-  calculateReadiness: () => unknown; createReview: () => unknown; listProposals: () => unknown;
-  explainFinding: (id: string) => unknown; approveProposal: (id: string) => unknown;
-  rejectProposal: (id: string) => unknown; resetScenario: () => unknown;
+/**
+ * WebMCP binding.
+ *
+ * Written against the WebMCP spec (webmachinelearning.github.io/webmcp) and
+ * Chrome's imperative API docs. Two details are easy to get wrong from memory:
+ *
+ *   1. Registration is `document.modelContext.registerTool(tool, { signal })` —
+ *      on `document`, not `navigator` or `window.agent`.
+ *   2. There is no `unregisterTool`. Deregistration is an `AbortSignal`: you
+ *      pass a controller's signal at registration and abort it to remove the
+ *      tool. That is why per-view registration below keeps one controller per
+ *      view and fires it on exit.
+ *
+ * `execute` resolves with any JSON-serializable value, which the user agent
+ * stringifies. It is *not* wrapped in an MCP `{content:[{type:"text"}]}`
+ * envelope — that is the wire format of the MCP server protocol, not this API.
+ *
+ * What is NOT here matters as much as what is: no approve, reject, edit, or
+ * exception-approval tool is ever constructed, let alone registered. See
+ * `lib/ripple/actor.ts`.
+ */
+
+import { HUMAN_ONLY_OPERATIONS, runAsTool } from './ripple/actor';
+import { ALL_TOOLS, toolsForView, type ToolDefinition, type ToolResult } from './ripple/tools';
+import { logActivity, setHighlight, type ViewId } from './ripple/store';
+
+type RegisteredTool = {
+  name: string;
+  title: string;
+  description: string;
+  inputSchema: object;
+  annotations: object;
+  execute: (input: Record<string, unknown>) => Promise<unknown>;
 };
-type WebMCPTool = { name: string; title: string; description: string; inputSchema: object; annotations: { readOnlyHint: boolean; destructiveHint?: boolean; idempotentHint?: boolean }; execute: (input: Record<string, string>) => Promise<unknown> };
-type ModelContext = { registerTool: (tool: WebMCPTool) => void | Promise<void>; getTools?: () => Promise<unknown[]> };
-declare global { interface Window { __rippleActions?: RippleActions; __rippleRegistered?: boolean; rippleWebMCP?: { mode: 'native'|'localhost-shim'; listTools: () => Omit<WebMCPTool,'execute'>[]; callTool: (name:string,input?:Record<string,string>)=>unknown } } interface Document { modelContext?: ModelContext } }
 
-const noInput = { type:'object', properties:{}, additionalProperties:false };
-const idInput = { type:'object', properties:{ id:{ type:'string', description:'Exact RippleTrace finding, proposal, or source-record identifier.' } }, required:['id'], additionalProperties:false };
-const severityInput = { type:'object', properties:{ severity:{ type:'string', enum:['critical','high','moderate','low','info'], description:'Optional exact severity filter.' } }, additionalProperties:false };
+type ModelContext = {
+  registerTool: (tool: RegisteredTool, options?: { signal?: AbortSignal }) => void | Promise<void>;
+  getTools?: () => Promise<unknown[]>;
+};
 
-function ensureLocalModelContext(){
-  if(document.modelContext || !['localhost','127.0.0.1'].includes(location.hostname)) return 'native' as const;
-  const tools=new Map<string,WebMCPTool>(); document.modelContext={registerTool:(tool)=>{tools.set(tool.name,tool)}};
-  window.rippleWebMCP={mode:'localhost-shim',listTools:()=>[...tools.values()].map(({execute:_,...tool})=>tool),callTool:(name,input={})=>{const tool=tools.get(name);if(!tool)throw new Error('Unknown WebMCP tool: '+name);return tool.execute(input)}};
-  return 'localhost-shim' as const;
+declare global {
+  interface Document {
+    modelContext?: ModelContext;
+  }
+  interface Window {
+    rippleWebMCP?: {
+      mode: 'native' | 'localhost-shim';
+      view: ViewId | null;
+      listTools: () => Omit<RegisteredTool, 'execute'>[];
+      callTool: (name: string, input?: Record<string, unknown>) => unknown;
+      neverRegistered: readonly { name: string; where: string }[];
+    };
+  }
 }
-function activity(name:string,phase:'started'|'completed'|'failed',detail?:unknown){window.dispatchEvent(new CustomEvent('ripple:webmcp-activity',{detail:{name,phase,detail,at:new Date().toISOString()}}))}
-async function invoke(name:string,run:()=>unknown){activity(name,'started');try{const output=await run();activity(name,'completed',output);return output}catch(error){activity(name,'failed',error instanceof Error?error.message:String(error));throw error}}
 
-export function registerRippleTools(actions:RippleActions){
-  window.__rippleActions=actions; const mode=ensureLocalModelContext(); const context=document.modelContext;
-  if(!context||window.__rippleRegistered)return false;
-  const readOnly={readOnlyHint:true,destructiveHint:false,idempotentHint:true};
-  const mutating={readOnlyHint:false,destructiveHint:false,idempotentHint:true};
-  const tool=(definition:Omit<WebMCPTool,'execute'>,run:(input:JsonRecord)=>unknown):WebMCPTool=>({...definition,execute:async(input)=>invoke(definition.name,()=>run(input))});
-  const tools:WebMCPTool[]=[
-    tool({name:'get_policy_change',title:'Get incoming policy change',description:'Return exact Confluence change AC2-CHG-2026-017 with before/after assertions, author, effective date, and authority state.',inputSchema:noInput,annotations:readOnly},()=>window.__rippleActions?.getPolicyChange()),
-    tool({name:'list_connected_systems',title:'List connected enterprise systems',description:'List systems participating in the Wexler investigation with exact record counts and roles.',inputSchema:noInput,annotations:readOnly},()=>window.__rippleActions?.listSystems()),
-    tool({name:'get_source_record',title:'Get one source-system record',description:'Retrieve one exact source record by stable entity ID, including native reference, structured fields, provenance, and related findings. Never invent an ID.',inputSchema:idInput,annotations:readOnly},({id})=>window.__rippleActions?.getSourceRecord(String(id))),
-    tool({name:'trace_ac2_dependencies',title:'Trace AC-2 dependencies',description:'Return the bounded AC-2 policy-to-control-to-work-to-test-to-evidence dependency chain with provenance on every relationship.',inputSchema:noInput,annotations:readOnly},()=>window.__rippleActions?.traceRequirement()),
-    tool({name:'analyze_change_impact',title:'Analyze AC-2 v3 impact',description:'Run deterministic assertion comparisons for AC-2 v2 to v3 and return compact counts with exact finding IDs. Changes no source record.',inputSchema:noInput,annotations:readOnly},()=>window.__rippleActions?.analyzeImpact()),
-    tool({name:'list_impact_findings',title:'List grounded impact findings',description:'List exact findings and source-record IDs, optionally filtered by severity. Inspect records before recommending action.',inputSchema:severityInput,annotations:readOnly},({severity})=>window.__rippleActions?.listFindings(severity?String(severity):undefined)),
-    tool({name:'explain_finding',title:'Explain one finding',description:'Explain one exact finding with its deterministic rule, expected assertion, observed assertion, and complete source-record citations.',inputSchema:idInput,annotations:readOnly},({id})=>window.__rippleActions?.explainFinding(String(id))),
-    tool({name:'calculate_readiness',title:'Calculate assurance readiness',description:'Calculate the current weighted readiness score and component details from the scenario and human proposal decisions.',inputSchema:noInput,annotations:readOnly},()=>window.__rippleActions?.calculateReadiness()),
-    tool({name:'create_impact_review',title:'Create draft remediation proposals',description:'Convert findings into individually reviewable draft proposals with exact IDs and targets. Creates drafts only; does not approve or write back.',inputSchema:noInput,annotations:mutating},()=>window.__rippleActions?.createReview()),
-    tool({name:'list_remediation_proposals',title:'List remediation proposals',description:'Return proposal IDs, targets, risks, human decision state, and expected downstream effects.',inputSchema:noInput,annotations:readOnly},()=>window.__rippleActions?.listProposals()),
-    tool({name:'approve_proposal',title:'Approve one selected proposal',description:'Record Dana Lindqvist’s approval for exactly one proposal. Invoke only after the user explicitly names its proposal ID.',inputSchema:idInput,annotations:mutating},({id})=>window.__rippleActions?.approveProposal(String(id))),
-    tool({name:'reject_proposal',title:'Reject one selected proposal',description:'Record Dana Lindqvist’s rejection for exactly one proposal. Invoke only after the user explicitly names its proposal ID.',inputSchema:idInput,annotations:mutating},({id})=>window.__rippleActions?.rejectProposal(String(id))),
-    tool({name:'reset_wexler_scenario',title:'Reset the Wexler scenario',description:'Reset this browser’s synthetic Wexler investigation to its initial unassessed state and clear local demo decisions.',inputSchema:noInput,annotations:mutating},()=>window.__rippleActions?.resetScenario()),
-  ];
-  window.__rippleRegistered=true;
-  void Promise.all(tools.map((item)=>Promise.resolve(context.registerTool(item)))).then(()=>{document.documentElement.dataset.webmcpTools=String(tools.length);document.documentElement.dataset.webmcpMode=mode;window.dispatchEvent(new CustomEvent('ripple:webmcp-ready',{detail:{toolCount:tools.length,mode}}))}).catch((error)=>{window.__rippleRegistered=false;document.documentElement.dataset.webmcpError=error instanceof Error?error.message:String(error);console.error('[RippleTrace] WebMCP registration failed',error)});
-  return true;
+function activity(name: string, phase: 'started' | 'completed' | 'failed', detail?: unknown) {
+  window.dispatchEvent(
+    new CustomEvent('ripple:webmcp-activity', { detail: { name, phase, detail, at: new Date().toISOString() } }),
+  );
+}
+
+export function isWebMCPAvailable(): boolean {
+  return typeof document !== 'undefined' && Boolean(document.modelContext);
+}
+
+/**
+ * The single execution path. The WebMCP handler and the in-app console both
+ * call this, so what a judge exercises through an agent and what you exercise
+ * locally are the same code — including the actor boundary and the activity log.
+ */
+export function invokeTool(tool: ToolDefinition, input: Record<string, unknown>): ToolResult {
+  activity(tool.name, 'started');
+  const started = performance.now();
+  try {
+    const result = runAsTool(tool.name, () => tool.execute(input ?? {}));
+    const touched = tool.touched?.(result) ?? [];
+    logActivity({
+      actor: 'agent:webmcp',
+      origin: 'agent',
+      tool: tool.name,
+      message: result.summary,
+      entityIds: touched,
+    });
+    if (touched.length) setHighlight(touched);
+    activity(tool.name, 'completed', result);
+    return { ...result, _elapsedMs: Math.round(performance.now() - started) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logActivity({
+      actor: 'agent:webmcp',
+      origin: 'agent',
+      tool: tool.name,
+      message: `Refused: ${message}`,
+      entityIds: [],
+      refused: true,
+    });
+    activity(tool.name, 'failed', message);
+    // Returned, not thrown: a boundary refusal is information the agent should
+    // read and correct itself against, not a crash.
+    return { summary: `Tool '${tool.name}' could not complete: ${message}`, error: message };
+  }
+}
+
+let activeController: AbortController | null = null;
+let activeView: ViewId | null = null;
+const shimTools = new Map<string, RegisteredTool>();
+
+function installShimIfLocal(): 'native' | 'localhost-shim' | 'unavailable' {
+  if (typeof document === 'undefined') return 'unavailable';
+  if (document.modelContext) return 'native';
+  // A shim only on localhost, so the deployed page never pretends to have
+  // WebMCP it does not have.
+  if (!['localhost', '127.0.0.1'].includes(location.hostname)) return 'unavailable';
+  document.modelContext = {
+    registerTool: (tool, options) => {
+      shimTools.set(tool.name, tool);
+      options?.signal?.addEventListener('abort', () => shimTools.delete(tool.name));
+    },
+  };
+  return 'localhost-shim';
+}
+
+/**
+ * Register exactly the tools relevant to `view`, and deregister whatever the
+ * previous view had registered.
+ *
+ * Dumping all 16 tools on load would measurably degrade the agent's selection
+ * accuracy, and the surface is meant to track what the human is looking at.
+ */
+export function syncToolsToView(view: ViewId): { registered: string[]; mode: string } {
+  const mode = installShimIfLocal();
+  const context = typeof document !== 'undefined' ? document.modelContext : undefined;
+  const names = toolsForView(view).map((t) => t.name);
+
+  if (!context) {
+    activeView = view;
+    return { registered: [], mode: 'unavailable' };
+  }
+  if (activeView === view && activeController) return { registered: names, mode };
+
+  activeController?.abort();
+  const controller = new AbortController();
+  activeController = controller;
+  activeView = view;
+
+  for (const tool of toolsForView(view)) {
+    void context.registerTool(
+      {
+        name: tool.name,
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
+        execute: async (input) => invokeTool(tool, input ?? {}),
+      },
+      { signal: controller.signal },
+    );
+  }
+
+  window.rippleWebMCP = {
+    mode: mode === 'localhost-shim' ? 'localhost-shim' : 'native',
+    view,
+    listTools: () =>
+      [...shimTools.values()].map((tool) => {
+        const { execute, ...rest } = tool;
+        void execute;
+        return rest;
+      }),
+    callTool: (name, input = {}) => {
+      const tool = ALL_TOOLS.find((t) => t.name === name);
+      if (!tool) throw new Error(`Unknown or unregistered WebMCP tool: ${name}`);
+      return invokeTool(tool, input);
+    },
+    // Discoverable from the console, because the absence is the point.
+    neverRegistered: HUMAN_ONLY_OPERATIONS.map(({ name, where }) => ({ name, where })),
+  };
+
+  document.documentElement.dataset.webmcpTools = String(names.length);
+  document.documentElement.dataset.webmcpMode = mode;
+  document.documentElement.dataset.webmcpView = view;
+
+  logActivity({
+    actor: 'rippletrace',
+    origin: 'human',
+    message: `Registered ${names.length} tool(s) for the ${view} view; the previous set was deregistered.`,
+    entityIds: [],
+  });
+
+  window.dispatchEvent(new CustomEvent('ripple:webmcp-ready', { detail: { toolCount: names.length, mode, view } }));
+  return { registered: names, mode };
+}
+
+export function deregisterAll() {
+  activeController?.abort();
+  activeController = null;
+  activeView = null;
 }

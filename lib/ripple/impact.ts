@@ -436,48 +436,69 @@ export function analyzeChangeImpact(
   }
 
   // --- Rule 2b: unlinked candidate controls --------------------------------
-  // The cross-cutting pass. When a requirement makes a demand that none of its
-  // linked controls addresses, look for a control elsewhere in the graph that
-  // governs the same identity classes and does address it. Those are the
-  // controls a human would have to already know about to check — the review
-  // cadence configured by a different team, under a different requirement.
+  // The cross-cutting pass, and the one a person cannot do by hand.
+  //
+  // It runs per identity class, not per obligation: a linked control that
+  // satisfies an obligation for privileged humans says nothing about the same
+  // obligation for break-glass identities. So for each class the requirement
+  // governs that no linked control addresses, look for a control elsewhere in
+  // the graph that does govern that class and does declare the property —
+  // typically owned by another team, under another requirement, which is
+  // exactly why nobody thinks to check it.
+  const reportedUnlinked = new Set<string>();
   for (const required of after.assertions) {
     const scope = assertionScope(required, after.applicability);
-    const linkedAddresses = controls.some(
-      (c) =>
-        c.properties.some((p) => p.kind === required.kind) &&
-        scope.some((s) => c.coversIdentityClasses.includes(s)),
-    );
-    if (linkedAddresses) continue;
-
-    for (const candidate of allControlsIn(index)) {
-      if (controls.some((c) => c.id === candidate.id)) continue;
-      const overlap = scope.filter((s) => candidate.coversIdentityClasses.includes(s));
-      if (!overlap.length) continue;
-      const property = candidate.properties.find((p) => p.kind === required.kind);
-      if (!property) continue;
-
-      addressedKinds.add(required.kind);
-      const result = satisfies(required, property);
-      if (result.satisfied) continue;
-      insufficientUnlinked.add(candidate.id);
-      findings.push(
-        finding(
-          "control_insufficient",
-          "high",
-          requirementId,
-          [candidate.id],
-          `${candidate.code} governs ${list(overlap)} and ${result.observed}; ${after.code} v${after.version} requires ${result.expected}. It has no trace link to ${after.code}.`,
-          {
-            rule: `control_insufficient/unlinked_candidate.${required.kind}`,
-            expected: `${after.code} v${after.version}: ${result.expected}`,
-            observed: `${candidate.code} (${candidate.enforcedIn.map((r) => `${r.system}:${r.ref}`).join(", ")}) ${result.observed}, and implements ${
-              edgesFrom(index, candidate.id, "implements").map((e) => e.to).join(", ") || "nothing"
-            } rather than ${after.code}`,
-            comparedEntityIds: [after.id, candidate.id],
-          },
-        ),
+    for (const identityClass of scope) {
+      const linkedAddresses = controls.some(
+        (c) =>
+          c.coversIdentityClasses.includes(identityClass) &&
+          c.properties.some(
+            (p) =>
+              p.kind === required.kind &&
+              (!p.appliesTo?.length || p.appliesTo.includes(identityClass)),
+          ),
       );
+      if (linkedAddresses) continue;
+
+      for (const candidate of allControlsIn(index)) {
+        if (controls.some((c) => c.id === candidate.id)) continue;
+        if (!candidate.coversIdentityClasses.includes(identityClass)) continue;
+        // Honour the candidate property's own scope: a rule the control
+        // declares only for break-glass identities must be reported against
+        // break-glass, not against whichever class happened to match first.
+        const property = candidate.properties.find(
+          (p) =>
+            p.kind === required.kind &&
+            (!p.appliesTo?.length || p.appliesTo.includes(identityClass)),
+        );
+        if (!property) continue;
+
+        addressedKinds.add(required.kind);
+        const result = satisfies(required, property);
+        if (result.satisfied) continue;
+        const key = `${candidate.id}:${required.kind}`;
+        if (reportedUnlinked.has(key)) continue;
+        reportedUnlinked.add(key);
+        insufficientUnlinked.add(candidate.id);
+
+        findings.push(
+          finding(
+            "control_insufficient",
+            "high",
+            requirementId,
+            [candidate.id],
+            `${candidate.code} governs ${identityClass} and ${result.observed}; ${after.code} v${after.version} requires ${result.expected}. It has no trace link to ${after.code}.`,
+            {
+              rule: `control_insufficient/unlinked_candidate.${required.kind}`,
+              expected: `${after.code} v${after.version}: ${result.expected}`,
+              observed: `${candidate.code} (${candidate.enforcedIn.map((r) => `${r.system}:${r.ref}`).join(", ")}) ${result.observed} for ${identityClass}, and implements ${
+                edgesFrom(index, candidate.id, "implements").map((e) => e.to).join(", ") || "nothing"
+              } rather than ${after.code}`,
+              comparedEntityIds: [after.id, candidate.id],
+            },
+          ),
+        );
+      }
     }
   }
 

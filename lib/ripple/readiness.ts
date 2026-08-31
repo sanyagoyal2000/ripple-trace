@@ -215,9 +215,13 @@ export function calculateReadiness(
     ? (exceptions.length - unhealthy.length) / exceptions.length
     : 1;
 
-  // 5. Open proposals — unreviewed agent output is unfinished business.
-  const pending = proposals.filter((p) => p.status === "pending").length;
-  const openProposals = Math.max(0, 1 - pending / 10);
+  // 5. Review progress — findings you have drafted but nobody has decided are
+  // known problems left unaddressed, so an open review costs you. It is a
+  // progress meter, not a penalty box: it climbs back as a human works through
+  // the queue, and it is full again when the queue is empty.
+  const pending = proposals.filter((p) => p.status === 'pending').length;
+  const decided = proposals.length - pending;
+  const reviewProgress = proposals.length ? decided / proposals.length : 1;
 
   const components: ReadinessComponent[] = [
     {
@@ -256,10 +260,12 @@ export function calculateReadiness(
     },
     {
       key: "open_proposals",
-      label: "Open proposals",
+      label: "Review progress",
       weight: READINESS_WEIGHTS.open_proposals,
-      score: openProposals,
-      detail: `${pending} proposal(s) awaiting human review.`,
+      score: reviewProgress,
+      detail: proposals.length
+        ? `${decided} of ${proposals.length} proposal(s) decided; ${pending} awaiting a human.`
+        : "No proposals outstanding.",
     },
   ];
 
