@@ -8,8 +8,8 @@
  *      on `document`, not `navigator` or `window.agent`.
  *   2. There is no `unregisterTool`. Deregistration is an `AbortSignal`: you
  *      pass a controller's signal at registration and abort it to remove the
- *      tool. That is why per-view registration below keeps one controller per
- *      view and fires it on exit.
+ *      tool. Read-only investigation tools remain global; proposal tools are
+ *      recalculated as the human moves between views.
  *
  * `execute` resolves with any JSON-serializable value, which the user agent
  * stringifies. It is *not* wrapped in an MCP `{content:[{type:"text"}]}`
@@ -121,11 +121,8 @@ function installShimIfLocal(): 'native' | 'localhost-shim' | 'unavailable' {
 }
 
 /**
- * Register exactly the tools relevant to `view`, and deregister whatever the
- * previous view had registered.
- *
- * Dumping all 16 tools on load would measurably degrade the agent's selection
- * accuracy, and the surface is meant to track what the human is looking at.
+ * Register every safe investigation tool plus proposal tools relevant to the
+ * current view, and deregister the previous set when the view changes.
  */
 export function syncToolsToView(view: ViewId): { registered: string[]; mode: string } {
   const mode = installShimIfLocal();

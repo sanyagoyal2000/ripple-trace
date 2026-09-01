@@ -43,7 +43,7 @@ import {
   selectEntity,
   type ViewId,
 } from './store';
-import type { Proposal, SourceRef, TraceEdge } from './types';
+import type { Entity, Proposal, SourceRef, SourceSystem, TraceEdge } from './types';
 
 export interface ToolResult {
   summary: string;
@@ -73,6 +73,57 @@ const today = () => getState().today;
 const noInput = { type: 'object' as const, properties: {}, additionalProperties: false };
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true };
 const proposing = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+
+function recordsFrom(systems: SourceSystem[]): Entity[] {
+  return [...index().entities.values()].filter((entity) => systems.includes(entity.sourceRef.system));
+}
+
+function projectSourceRecord(entity: Entity) {
+  return { ...entity, nativeId: entity.sourceRef.ref, system: entity.sourceRef.system, source: chip(entity.sourceRef) };
+}
+
+function findNativeRecord(systems: SourceSystem[], ref: unknown): Entity | undefined {
+  const wanted = String(ref ?? '').trim().toLowerCase();
+  return recordsFrom(systems).find(
+    (entity) => entity.sourceRef.ref.toLowerCase() === wanted || entity.id.toLowerCase() === wanted,
+  );
+}
+
+function sourceLookupTool(
+  name: string,
+  title: string,
+  description: string,
+  systems: SourceSystem[],
+  inputName: string,
+  inputDescription: string,
+): ToolDefinition {
+  return {
+    name,
+    title,
+    description,
+    views: ['overview', 'change', 'impact', 'graph', 'execution', 'evidence'],
+    annotations: readOnly,
+    inputSchema: {
+      type: 'object',
+      properties: { [inputName]: { type: 'string', description: inputDescription } },
+      required: [inputName],
+      additionalProperties: false,
+    },
+    touched: (result) => [String((result.record as { id?: string })?.id ?? '')].filter(Boolean),
+    execute: (input) => {
+      const ref = input[inputName];
+      const record = findNativeRecord(systems, ref);
+      if (!record) {
+        return {
+          summary: `No ${systems.join('/')} record '${String(ref)}' exists in the Wexler scenario.`,
+          availableNativeIds: recordsFrom(systems).map((entity) => entity.sourceRef.ref),
+        };
+      }
+      selectEntity(record.id);
+      return { summary: `${record.sourceRef.system}:${record.sourceRef.ref} — ${record.title}`, record: projectSourceRecord(record) };
+    },
+  };
+}
 
 function projectEdge(i: GraphIndex, edge: TraceEdge) {
   return {
@@ -1168,17 +1219,74 @@ const auditTools: ToolDefinition[] = [
   },
 ];
 
-export const ALL_TOOLS: ToolDefinition[] = [...readTools, ...analyzeTools, ...proposeTools, ...auditTools];
+/** Native-system tools preserve the identifiers and vocabulary of each system of record. */
+const enterpriseSourceTools: ToolDefinition[] = [
+  {
+    name: 'search_confluence_pages',
+    title: 'Search Wexler Confluence policy pages',
+    description: 'Search the simulated Wexler Confluence space for policy and requirement pages by id, title, or text. Use this to locate policy truth, not delivery work.',
+    views: ['overview', 'change', 'impact', 'graph', 'execution', 'evidence'],
+    annotations: readOnly,
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'Policy text, requirement code, page id, or title fragment.' } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    execute: ({ query }) => {
+      const q = String(query).toLowerCase();
+      const records = recordsFrom(['confluence']).filter((entity) => JSON.stringify(entity).toLowerCase().includes(q));
+      return { summary: `Found ${records.length} Confluence page(s) matching '${String(query)}'.`, records: records.map(projectSourceRecord) };
+    },
+  },
+  sourceLookupTool('get_confluence_page', 'Read a Confluence policy page', 'Return one simulated Confluence policy page by its native WSEC page reference. Use it for authoritative policy wording and version metadata.', ['confluence'], 'pageRef', "Native reference such as 'WSEC/pages/884215'."),
+  {
+    name: 'search_jira_issues',
+    title: 'Search Wexler Jira issues',
+    description: 'Search simulated Jira work by key, title, team, assignee, status, or acceptance criteria. Use it to find engineering work connected to a policy obligation.',
+    views: ['overview', 'change', 'impact', 'graph', 'execution', 'evidence'],
+    annotations: readOnly,
+    inputSchema: {
+      type: 'object',
+      properties: { query: { type: 'string', description: "Jira key or free-text query, e.g. 'PLAT-4471' or 'break glass'." } },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    execute: ({ query }) => {
+      const q = String(query).toLowerCase();
+      const records = recordsFrom(['jira']).filter((entity) => JSON.stringify(entity).toLowerCase().includes(q));
+      return { summary: `Found ${records.length} Jira issue(s) matching '${String(query)}'.`, records: records.map(projectSourceRecord) };
+    },
+  },
+  sourceLookupTool('get_jira_issue', 'Read a Jira issue', 'Return one simulated Jira issue with status, owner, acceptance criteria, and trace identity. Use this after search_jira_issues identifies a key.', ['jira'], 'issueKey', "Native Jira key such as 'PLAT-4471'."),
+  sourceLookupTool('get_azure_board_item', 'Read an Azure Boards work item', 'Return one simulated Azure Boards record from the acquired business unit. Use this instead of get_jira_issue for numeric Azure work-item ids.', ['azure_boards'], 'workItemId', "Native numeric id such as '12844'."),
+  sourceLookupTool('get_pipeline_run', 'Read an automated test or pipeline run', 'Return a simulated GitHub Actions or Azure DevOps Pipelines test definition or run. Use this to verify implementation evidence, not policy intent.', ['github_actions', 'azure_pipelines'], 'runRef', 'Native workflow, run, or pipeline reference.'),
+  sourceLookupTool('get_identity_record', 'Read an Entra ID or Okta identity record', 'Return a simulated Microsoft Entra ID or Okta configuration or export. Use this to inspect identity enforcement across corporate and acquired environments.', ['entra_id', 'okta'], 'recordRef', 'Native Entra export or Okta report reference.'),
+  sourceLookupTool('get_servicenow_exception', 'Read a ServiceNow exception', 'Return one simulated ServiceNow risk exception or approval record. This reads scope, approver, expiry, and rationale; it cannot approve or renew it.', ['servicenow'], 'ticket', "Native request id such as 'RITM0084412'."),
+  sourceLookupTool('get_vanta_control_status', 'Read a Vanta monitor record', 'Return a simulated Vanta continuous-compliance monitor or evidence record. Use it to reconcile reported compliance with technical evidence.', ['vanta'], 'monitorRef', 'Native Vanta monitor reference.'),
+  sourceLookupTool('get_architecture_decision', 'Read a SharePoint architecture decision', 'Return a simulated SharePoint ADR explaining an architectural constraint or accepted design.', ['sharepoint'], 'decisionRef', 'Native SharePoint ADR reference.'),
+  sourceLookupTool('get_infrastructure_record', 'Read an infrastructure execution record', 'Return a simulated AWS, Azure, or Terraform Cloud infrastructure record tied to a control.', ['aws', 'azure', 'terraform_cloud'], 'recordRef', 'Native cloud resource or Terraform run reference.'),
+  sourceLookupTool('get_observability_record', 'Read a Splunk or Datadog record', 'Return a simulated Splunk or Datadog logging, retention, drift, or monitoring record.', ['splunk', 'datadog'], 'recordRef', 'Native Splunk or Datadog record reference.'),
+];
+
+export const ALL_TOOLS: ToolDefinition[] = [
+  ...readTools,
+  ...enterpriseSourceTools,
+  ...analyzeTools,
+  ...proposeTools,
+  ...auditTools,
+];
 
 export const TOOL_GROUPS = {
   read: readTools.map((t) => t.name),
+  enterprise: enterpriseSourceTools.map((t) => t.name),
   analyze: analyzeTools.map((t) => t.name),
   propose: proposeTools.map((t) => t.name),
   audit: auditTools.map((t) => t.name),
 } as const;
 
 export function toolsForView(view: ViewId): ToolDefinition[] {
-  return ALL_TOOLS.filter((t) => t.views.includes(view));
+  return ALL_TOOLS.filter((tool) => tool.annotations.readOnlyHint || tool.views.includes(view));
 }
 
 export function toolByName(name: string): ToolDefinition | undefined {
